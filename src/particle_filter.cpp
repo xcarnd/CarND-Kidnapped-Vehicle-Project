@@ -20,8 +20,8 @@
 using namespace std;
 
 inline double normalize_angle(double theta) {
-	while (theta < -M_PI) theta += 2 * M_PI;
-	while (theta >  M_PI) theta -= 2 * M_PI;
+	// while (theta < -M_PI) theta += 2 * M_PI;
+	// while (theta >  M_PI) theta -= 2 * M_PI;
 	return theta;
 }
 
@@ -33,32 +33,54 @@ struct _Transform {
 };
 
 inline void map_coord_to_vehicle_coord(const _Transform& trans, const Map::single_landmark_s& landmark, LandmarkObs& out) {
-	// transform from map coordinate to vehicle coordinate can
-	// be expressed as a affine transform, which can be decomposed
-	// as rotate then translate
+	// c: cos(theta)
+	// s: sin(theta)
+	// 2d rotation matrix R: 
+	// | c -s 0 |
+	// | s  c 0 |
+	// | 0  0 1 |
+	// 2d translation matrix T:
+	// | 1 0 tx |
+	// | 0 1 ty |
+	// | 0 0  1 |
+	// R * T:
+	// | c, -s, c * tx - s * ty |
+	// | s,  c, s * tx + c * ty |
+	// | 0,  0,               1 |
 	//
+	// applying transform:
+	// | c, -s, c * tx - s * ty |   | x |   | x * c - y * s + c * tx - s * ty |
+	// | s,  c, s * tx + c * ty | * | y | = | x * s + y * c + s * tx + c * ty |
+	// | 0,  0,               1 |   | 1 |   |                               1 |
+	//
+	// above is the math behind this function.
+	out.id = landmark.id_i;
+	out.x = landmark.x_f * trans.cos_theta - landmark.y_f * trans.sin_theta + trans.cos_theta * trans.trans_x - trans.sin_theta * trans.trans_y;
+	out.y = landmark.x_f * trans.sin_theta + landmark.y_f * trans.cos_theta + trans.sin_theta * trans.trans_x + trans.cos_theta * trans.trans_y;
+}
+
+inline void vehicle_coord_to_map_coord(const _Transform& trans, const LandmarkObs& local, LandmarkObs& map) {
+	// c: cos(theta)
+	// s: sin(theta)
 	// 2d rotation matrix: 
-	// | cos(theta) -sin(theta) 0 |
-	// | sin(theta)  cos(theta) 0 |
-	// |          0           0 1 |
+	// | c -s 0 |
+	// | s  c 0 |
+	// | 0  0 1 |
 	// 2d translation matrix:
 	// | 1 0 tx |
 	// | 0 1 ty |
 	// | 0 0  1 |
-	// multiplied:
-	// | cos(theta) -sin(theta) tx |
-	// | sin(theta)  cos(theta) ty |
-	// |          0           0  1 |
+	// T * R
+	// | c -s tx |
+	// | s  c ty |
+	// | 0  0  1 |
 	//
-	// applying transform:
-	// | cos(theta) -sin(theta) tx |   | x |   | x * cos(theta) - y * sin(theta) + tx |
-	// | sin(theta)  cos(theta) ty | * | y | = | x * sin(theta) + y * cos(theta) + ty |
-	// |          0           0  1 |   | 1 |   |                                    1 |
-	//
-	// above is the math behind this function.
-	out.id = landmark.id_i;
-	out.x = landmark.x_f * trans.cos_theta - landmark.y_f * trans.sin_theta + trans.trans_x;
-	out.y = landmark.x_f * trans.sin_theta + landmark.y_f * trans.cos_theta + trans.trans_y;
+	// applying transform;
+	// | c -s tx |   | x |   | c * x - s * y + tx |
+	// | s  c ty | * | y | = | s * x + c * y + ty |
+	// | 0  0  1 |   | 1 |   |                  1 |
+	map.x = local.x * trans.cos_theta - local.y * trans.sin_theta + trans.trans_x;
+	map.y = local.x * trans.sin_theta + local.y * trans.cos_theta + trans.trans_y;
 }
 
 const double SQRT_2 = sqrt(2);
@@ -121,26 +143,27 @@ void ParticleFilter::prediction(double delta_t, double std_pos[], double velocit
 	// NOTE: When adding noise you may find std::normal_distribution and std::default_random_engine useful.
 	//  http://en.cppreference.com/w/cpp/numeric/random/normal_distribution
 	//  http://www.cplusplus.com/reference/random/default_random_engine/
-	cout<<"Predicting"<<endl;
 	for (int i = 0; i < num_particles; ++i) {
 		Particle& p = particles[i];
-		// different equations for different yaw_rate
+
 		double dx;
 		double dy;
 		double dyaw;
-
-		// for yaw_rate approx = 0
-		dx = cos(p.theta) * velocity * delta_t;
-		dy = sin(p.theta) * velocity * delta_t;
-		// yaw doesn't change
-		dyaw = 0;
-
-		// for yaw_rate > 0
-		double k = velocity / yaw_rate;
-		double yaw_kp1 = p.theta + yaw_rate * delta_t;
-		dx = k * (sin(yaw_kp1) - sin(p.theta));
-		dy = k * (-cos(yaw_kp1) + cos(p.theta));
-		dyaw = yaw_rate * delta_t;
+		// different equations for different yaw_rate
+		if (fabs(yaw_rate) < 1e-5) {
+			// for yaw_rate approx = 0
+			dx = cos(p.theta) * velocity * delta_t;
+			dy = sin(p.theta) * velocity * delta_t;
+			// yaw doesn't change
+			dyaw = 0;
+		} else {
+			// for yaw_rate > 0
+			double k = velocity / yaw_rate;
+			double yaw_kp1 = p.theta + yaw_rate * delta_t;
+			dx = k * (sin(yaw_kp1) - sin(p.theta));
+			dy = k * (-cos(yaw_kp1) + cos(p.theta));
+			dyaw = yaw_rate * delta_t;
+		}
 
 		p.x += dx;
 		p.y += dy;
@@ -150,16 +173,14 @@ void ParticleFilter::prediction(double delta_t, double std_pos[], double velocit
 		normal_distribution<double> dist_y(p.y, std_pos[1]);
 		normal_distribution<double> dist_theta(p.theta, std_pos[2]);
 
-		// noise
-		p.x += dist_x(r);
-		p.y += dist_y(r);
-		p.theta += dist_theta(r);
+		// with noise
+		p.x = dist_x(r);
+		p.y = dist_y(r);
+		p.theta = dist_theta(r);
 		
 		// normalizing yaw
 		p.theta = normalize_angle(p.theta);
 	}
-	cout<<"Done"<<endl;
-	
 }
 
 void ParticleFilter::dataAssociation(const std::vector<LandmarkObs>& predicted, std::vector<LandmarkObs>& observations) {
@@ -175,7 +196,7 @@ void ParticleFilter::dataAssociation(const std::vector<LandmarkObs>& predicted, 
 			const LandmarkObs& prd = predicted[j];
 			double d = dist(obs.x, obs.y, prd.x, prd.y);
 			if (d < minDist) {
-				obs.id = prd.id;
+				obs.id = j;
 				minDist = d;
 			}
 		}
@@ -199,10 +220,10 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 	for (int i = 0; i < num_particles; ++i) {
 		Particle& p = particles[i];
 		_Transform trans;
-		trans.cos_theta = cos(p.theta);
-		trans.sin_theta = sin(p.theta);
-		trans.trans_x = p.x;
-		trans.trans_y = p.y;
+		trans.cos_theta = cos(-p.theta);
+		trans.sin_theta = sin(-p.theta);
+		trans.trans_x = -p.x;
+		trans.trans_y = -p.y;
 		// calculate predicted location of each landmark
 		std::vector<LandmarkObs> predicted;
 		predicted.reserve(map_landmarks.landmark_list.size());
@@ -211,31 +232,53 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 			double d = dist(p.x, p.y,
 					landmark.x_f,
 					landmark.y_f);
-			if (d > sensor_range) {
-				continue;
-			}
+			// if (d > sensor_range) {
+			// 	continue;
+			// }
 			LandmarkObs obs;
 			obs.id = landmark.id_i;
+
 			map_coord_to_vehicle_coord(trans, landmark, obs);
+			// cout<<obs.id<<"  "<<landmark.x_f<<' '<<landmark.y_f<<" -- "<<p.x<<", "<<p.y<<", "<<p.theta<<" -> "<<obs.x<<", "<<obs.y<<endl;
 			predicted.push_back(obs);
 		}
 		this->dataAssociation(predicted, observations);
+
+		// for debugging: parameters for calling SetAssociations
+		// vector<int> associations;
+		// vector<double> sense_x;
+		// vector<double> sense_y;
+
 		// update weights
 		double new_weight = 1.0;
 		for (int j = 0; j < observations.size(); ++j) {
-			// landmarks observations are transformed into
-			// vehicle coordinate, with the particle
-			// as the origin, so when calculating
-			// measurement prob, the mean is (0, 0)
-			const LandmarkObs& obs = observations[i];
+			const LandmarkObs& obs = observations[j];
+			const LandmarkObs& prd = predicted[obs.id];
 			double prob = calculate_weight_for_obs(obs,
-							       0.0,
-							       0.0, 
+							       prd.x,
+							       prd.y, 
 							       std_landmark[0],
 							       std_landmark[1]);
+			// cout<<prd.id<<","<<obs.id<<"   "<<prd.x<<' '<<prd.y<<' '<<obs.x<<' '<<obs.y<<endl;
 			new_weight *= prob;
+
+
+			// LandmarkObs global;
+			// _Transform trans2;
+			// trans2.cos_theta = cos(p.theta);
+			// trans2.sin_theta = sin(p.theta);
+			// trans2.trans_x = p.x;
+			// trans2.trans_y = p.y;
+
+			// vehicle_coord_to_map_coord(trans2, obs, global);
+
+			// associations.push_back(obs.id);
+			// sense_x.push_back(global.x);
+			// sense_y.push_back(global.y);
 		}
 		p.weight = new_weight;
+
+		// this->SetAssociations(p, associations, sense_x, sense_y);
 		
 		weight_sum += p.weight;
 	}
