@@ -20,6 +20,7 @@
 using namespace std;
 
 inline double normalize_angle(double theta) {
+	// it seems that the simulator will yield big yaw error when doing normalization :-(
 	// while (theta < -M_PI) theta += 2 * M_PI;
 	// while (theta >  M_PI) theta -= 2 * M_PI;
 	return theta;
@@ -232,9 +233,10 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 			double d = dist(p.x, p.y,
 					landmark.x_f,
 					landmark.y_f);
-			// if (d > sensor_range) {
-			// 	continue;
-			// }
+			// filtering out "unsensable" landmarks
+			if (d > sensor_range) {
+				continue;
+			}
 			LandmarkObs obs;
 			obs.id = landmark.id_i;
 
