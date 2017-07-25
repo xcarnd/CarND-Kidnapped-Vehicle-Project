@@ -303,8 +303,7 @@ void ParticleFilter::resample() {
 
 	for (int i = 0; i < num_particles; ++i) {
 		int idx = dist(r);
-		Particle p = particles[idx];
-		particles.push_back(p);
+		particles.push_back(particles[idx]);
 	}
 	// remove old particles
 	particles.erase(particles.begin(), particles.begin() + num_particles);
