@@ -53,8 +53,6 @@ inline void map_coord_to_vehicle_coord(const _Transform& trans, const Map::singl
 	// | c, -s, c * tx - s * ty |   | x |   | x * c - y * s + c * tx - s * ty |
 	// | s,  c, s * tx + c * ty | * | y | = | x * s + y * c + s * tx + c * ty |
 	// | 0,  0,               1 |   | 1 |   |                               1 |
-	//
-	// above is the math behind this function.
 	out.id = landmark.id_i;
 	out.x = landmark.x_f * trans.cos_theta - landmark.y_f * trans.sin_theta + trans.cos_theta * trans.trans_x - trans.sin_theta * trans.trans_y;
 	out.y = landmark.x_f * trans.sin_theta + landmark.y_f * trans.cos_theta + trans.sin_theta * trans.trans_x + trans.cos_theta * trans.trans_y;
@@ -190,9 +188,10 @@ void ParticleFilter::dataAssociation(const std::vector<LandmarkObs>& predicted, 
 	// NOTE: this method will NOT be called by the grading code. But you will probably find it useful to 
 	//   implement this method and use it as a helper during the updateWeights phase.
 	
-	double minDist = std::numeric_limits<double>::max();
 	for (int i = 0; i < observations.size(); ++i) {
 		LandmarkObs& obs = observations[i];
+
+		double minDist = std::numeric_limits<double>::max();
 		for (int j = 0; j < predicted.size(); ++j) {
 			const LandmarkObs& prd = predicted[j];
 			double d = dist(obs.x, obs.y, prd.x, prd.y);
@@ -217,7 +216,6 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 	//   and the following is a good resource for the actual equation to implement (look at equation 
 	//   3.33
 	//   http://planning.cs.uiuc.edu/node99.html
-	double weight_sum = 0.0;
 	for (int i = 0; i < num_particles; ++i) {
 		Particle& p = particles[i];
 		_Transform trans;
@@ -281,23 +279,16 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 		p.weight = new_weight;
 
 		// this->SetAssociations(p, associations, sense_x, sense_y);
-		
-		weight_sum += p.weight;
 	}
-
-	// normalizing
-	// for (int i = 0; i < num_particles; ++i) {
-	// 	particles[i].weight /= weight_sum;
-	// }
 }
 
 void ParticleFilter::resample() {
 	// TODO: Resample particles with replacement with probability proportional to their weight. 
 	// NOTE: You may find std::discrete_distribution helpful here.
 	//   http://en.cppreference.com/w/cpp/numeric/random/discrete_distribution
-	vector<double> weights;
+	vector<double> weights(num_particles);
 	for (int i = 0; i < num_particles; ++i) {
-		weights.push_back(particles[i].weight);
+		weights[i] = particles[i].weight;
 	}
 	discrete_distribution<> dist(weights.begin(), weights.end());
 
