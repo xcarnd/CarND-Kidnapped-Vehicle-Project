@@ -84,6 +84,25 @@ inline void vehicle_coord_to_map_coord(const _Transform& trans, const LandmarkOb
 
 const double SQRT_2 = sqrt(2);
 
+inline double calculate_weight_for_obs_optimized(const LandmarkObs& obs,
+						 double mu_x, double mu_y,
+						 double k,
+						 double sqrt_2_sigma_x,
+						 double sqrt_2_sigma_y) {
+	// without any optimization, weight can be computed as:
+	//
+	// double k = 1 / (2 * M_PI * sigma_x * sigma_y);
+	// double a = (obs.x - mu_x) / (SQRT_2 * sigma_x);
+	// double b = (obs.y - mu_y) / (SQRT_2 * sigma_y);
+	// return k * exp(-(a * a + b * b));
+	// 
+	// since k, SQRT_2 * sigma_x, SQRT_2 * sigma_y are constants across all 
+	// particles update within the same round, they can be precomputed.
+	double a = (obs.x - mu_x) / sqrt_2_sigma_x;
+	double b = (obs.y - mu_y) / sqrt_2_sigma_y;
+	return k * exp(-(a * a + b * b));
+}
+
 inline double calculate_weight_for_obs(const LandmarkObs& obs, 
 				       double mu_x, double mu_y, 
 				       double sigma_x, double sigma_y) {
@@ -116,7 +135,7 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
 	// Add random Gaussian noise to each particle.
 	// NOTE: Consult particle_filter.h for more information about this method (and others in this file).
 	
-	num_particles = 1000;
+	num_particles = 512;
 	// sampling particles around the location GPS provided
 	
 	normal_distribution<double> dist_x(x, std[0]);
@@ -216,6 +235,13 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 	//   and the following is a good resource for the actual equation to implement (look at equation 
 	//   3.33
 	//   http://planning.cs.uiuc.edu/node99.html
+
+	// precompute k, sqrt_2_sigma_x and sqrt_2_sigma_y. 
+	// See also comments in function `calculate_weight_for_obs_optimized`.
+	double k = 1 / (2 * M_PI * std_landmark[0] * std_landmark[1]);
+	double sqrt_2_sigma_x = SQRT_2 * std_landmark[0];
+	double sqrt_2_sigma_y = SQRT_2 * std_landmark[1];
+
 	for (int i = 0; i < num_particles; ++i) {
 		Particle& p = particles[i];
 		_Transform trans;
@@ -254,11 +280,12 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 		for (int j = 0; j < observations.size(); ++j) {
 			const LandmarkObs& obs = observations[j];
 			const LandmarkObs& prd = predicted[obs.id];
-			double prob = calculate_weight_for_obs(obs,
-							       prd.x,
-							       prd.y, 
-							       std_landmark[0],
-							       std_landmark[1]);
+			double prob = calculate_weight_for_obs_optimized(obs,
+									 prd.x,
+									 prd.y, 
+									 k,
+									 sqrt_2_sigma_x,
+									 sqrt_2_sigma_y);
 			// cout<<prd.id<<","<<obs.id<<"   "<<prd.x<<' '<<prd.y<<' '<<obs.x<<' '<<obs.y<<endl;
 			new_weight *= prob;
 
